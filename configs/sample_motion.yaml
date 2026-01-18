@@ -24,13 +24,13 @@ data_dir: "./data/HumanML3D"
 
 save_path: "./visual_datas/"
 
-text: "A person walking and changing their path to the left."
+text: "A person dancing hip-hop"
 
 sample_name: "gen_motion"
 
 length: 100
 
-repeats: 10
+repeats: 3
 
 device: "0"
 

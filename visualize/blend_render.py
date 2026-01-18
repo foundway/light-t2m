@@ -205,6 +205,7 @@ def get_motion_meshes(motions, name, device, mesh_dir, sigma):
                            jointstype='vertices',
                            vertstrans=True).cpu()
 
+        os.makedirs(mesh_dir, exist_ok=True)
         torch.save(vertices.cpu(), osp.join(mesh_dir, name + '.pt'))
     else:
         vertices = torch.load(osp.join(mesh_dir, name + '.pt'))

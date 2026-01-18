@@ -18,7 +18,7 @@ class T2MEvaluator(object):
         self.t2m_textenc = TextEncoderBiGRUCo(word_size=300, pos_size=15, hidden_size=512, output_size=512)
         self.t2m_moveenc = MovementConvEncoder(input_size=motion_dim - 4, hidden_size=512, output_size=512)
         self.t2m_motionenc = MotionEncoderBiGRUCo(input_size=512, hidden_size=1024, output_size=512)
-        t2m_checkpoint = torch.load(osp.join(ckpt_dir, "text_mot_match/model/finest.tar"), map_location='cpu')
+        t2m_checkpoint = torch.load(osp.join(ckpt_dir, "text_mot_match/model/finest.tar"), map_location='cpu', weights_only=False)
         self.t2m_textenc.load_state_dict(t2m_checkpoint["text_encoder"])
         self.t2m_moveenc.load_state_dict(t2m_checkpoint["movement_encoder"])
         self.t2m_motionenc.load_state_dict(t2m_checkpoint["motion_encoder"])

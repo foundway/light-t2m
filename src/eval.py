@@ -124,7 +124,7 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         exit()
     else:
         # print("loading ckpt from ", cfg.ckpt_path)
-        state_dict = torch.load(cfg.ckpt_path, map_location="cpu")["state_dict"]
+        state_dict = torch.load(cfg.ckpt_path, map_location="cpu", weights_only=False)["state_dict"]
         keys_list = list(state_dict.keys())
         # print(keys_list)
         for key in keys_list:

@@ -66,7 +66,9 @@ def generation(model, cfg):
     save_path = pjoin(cfg.save_path, "gen_joints")
     os.makedirs(save_path, exist_ok=True)
     
+    log.info(f"Using text prompt: '{cfg.text}' (type: {type(cfg.text)})")
     texts = [cfg.text] * cfg.repeats
+    log.info(f"Texts list: {texts[:2]}... (total: {len(texts)} repeats)")
     motion_length = cfg.length
     
     motion = torch.zeros([1, motion_length, 263], device=model.device)
@@ -110,7 +112,7 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         exit()
     else:
         # print("loading ckpt from ", cfg.ckpt_path)
-        state_dict = torch.load(cfg.ckpt_path, map_location="cpu")["state_dict"]
+        state_dict = torch.load(cfg.ckpt_path, map_location="cpu", weights_only=False)["state_dict"]
         keys_list = list(state_dict.keys())
         # print(keys_list)
         for key in keys_list:
