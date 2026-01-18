@@ -47,6 +47,8 @@ log = RankedLogger(__name__, rank_zero_only=True)
 
 from tqdm import tqdm
 from src.data.humanml.scripts.motion_process import recover_from_ric
+from src.data.humanml.common.quaternion import cont6d_to_matrix_np
+from src.utils.fbx_utils import extract_smpl_params_from_fbx, export_motion_to_fbx
 
 
 @torch.no_grad()
@@ -66,6 +68,18 @@ def generation(model, cfg):
     save_path = pjoin(cfg.save_path, "gen_joints")
     os.makedirs(save_path, exist_ok=True)
     
+    input_fbx = cfg.get("input_fbx", None)
+    output_fbx = cfg.get("output_fbx", None)
+    
+    init_params = None
+    if input_fbx and os.path.exists(input_fbx):
+        log.info(f"Extracting SMPL parameters from input FBX: {input_fbx}")
+        init_params = extract_smpl_params_from_fbx(input_fbx, device=cfg.device)
+        if init_params is None:
+            log.warning("Failed to extract SMPL parameters from FBX, using default initialization")
+        else:
+            log.info("Successfully extracted SMPL parameters from input FBX")
+    
     log.info(f"Using text prompt: '{cfg.text}' (type: {type(cfg.text)})")
     texts = [cfg.text] * cfg.repeats
     log.info(f"Texts list: {texts[:2]}... (total: {len(texts)} repeats)")
@@ -79,9 +93,133 @@ def generation(model, cfg):
     gen_motions = gen_motions * std + mean
     gen_joints = recover_from_ric(gen_motions, 22).cpu().numpy()
     
+    gen_rotations = None
+    if output_fbx:
+        log.info("Extracting rotations from model output")
+        joints_num = 22
+        from src.data.humanml.scripts.motion_process import recover_root_rot_pos
+        from src.data.humanml.common.quaternion import quaternion_to_cont6d
+        
+        r_rot_quat, r_pos = recover_root_rot_pos(gen_motions)
+        r_rot_cont6d = quaternion_to_cont6d(r_rot_quat)
+        
+        start_indx = 1 + 2 + 1 + (joints_num - 1) * 3
+        end_indx = start_indx + (joints_num - 1) * 6
+        cont6d_params = gen_motions[..., start_indx:end_indx]
+        cont6d_params = torch.cat([r_rot_cont6d, cont6d_params], dim=-1)
+        cont6d_params = cont6d_params.view(-1, joints_num, 6)
+        
+        rot_matrices = cont6d_to_matrix_np(cont6d_params.cpu().numpy())
+        gen_rotations = rot_matrices
+    
     name = cfg.sample_name
     for i in range(len(texts)):
-        np.save(pjoin(save_path, name + f"_{i}.npy"), gen_joints[i])    
+        np.save(pjoin(save_path, name + f"_{i}.npy"), gen_joints[i])
+    
+    if output_fbx:
+        fbx_save_path = pjoin(cfg.save_path, "gen_fbx")
+        os.makedirs(fbx_save_path, exist_ok=True)
+        pkl_save_path = pjoin(cfg.save_path, "gen_pkl")
+        os.makedirs(pkl_save_path, exist_ok=True)
+        
+        log.info(f"Converting joints to SMPL format (pkl) first, then to FBX")
+        from visualize.utils.simplify_loc2rot import joints2smpl
+        from src.utils.smpl_pkl_to_fbx import smpl_pkl_to_fbx
+        import pickle
+        
+        for i in range(len(texts)):
+            pkl_path = pjoin(pkl_save_path, name + f"_{i}.pkl")
+            output_fbx_path = pjoin(fbx_save_path, name + f"_{i}.fbx")
+            
+            log.info(f"Converting joints to SMPL pkl for sample {i}...")
+            num_frames = gen_joints[i].shape[0]
+            
+            num_smplify_iters = cfg.get("num_smplify_iters", 50)
+            j2s = joints2smpl(
+                num_frames=num_frames,
+                device_id=cfg.device if cfg.device != "cpu" else 0,
+                cuda=(cfg.device != "cpu"),
+                num_smplify_iters=num_smplify_iters
+            )
+            
+            keypoints_3d = torch.Tensor(gen_joints[i]).to(j2s.device).float()
+            
+            if init_params is None:
+                pred_betas = j2s.init_mean_shape
+                pred_pose = j2s.init_mean_pose
+                pred_cam_t = j2s.cam_trans_zero
+            else:
+                betas_param = init_params['betas']
+                if isinstance(betas_param, torch.Tensor):
+                    betas_param = betas_param.cpu().numpy() if betas_param.is_cuda else betas_param.numpy()
+                pose_param = init_params['pose']
+                if isinstance(pose_param, torch.Tensor):
+                    pose_param = pose_param.cpu().numpy() if pose_param.is_cuda else pose_param.numpy()
+                cam_param = init_params['cam']
+                if isinstance(cam_param, torch.Tensor):
+                    cam_param = cam_param.cpu().numpy() if cam_param.is_cuda else cam_param.numpy()
+                
+                if len(betas_param.shape) == 1:
+                    betas_param = betas_param[np.newaxis, :]
+                if len(pose_param.shape) == 1:
+                    pose_param = pose_param[np.newaxis, :]
+                if len(cam_param.shape) == 1:
+                    cam_param = cam_param[np.newaxis, :]
+                
+                if betas_param.shape[0] == 1 and num_frames > 1:
+                    betas_param = np.repeat(betas_param, num_frames, axis=0)
+                if pose_param.shape[0] == 1 and num_frames > 1:
+                    pose_param = np.repeat(pose_param, num_frames, axis=0)
+                if cam_param.shape[0] == 1 and num_frames > 1:
+                    cam_param = np.repeat(cam_param, num_frames, axis=0)
+                
+                pred_betas = torch.from_numpy(betas_param).float().to(j2s.device)
+                pred_pose = torch.from_numpy(pose_param).float().to(j2s.device)
+                pred_cam_t = torch.from_numpy(cam_param).float().to(j2s.device)
+            
+            confidence_input = torch.ones(j2s.num_joints).to(j2s.device)
+            
+            new_opt_vertices, new_opt_joints, new_opt_pose, new_opt_betas, \
+            new_opt_cam_t, new_opt_joint_loss = j2s.smplify(
+                pred_pose.detach(),
+                pred_betas.detach(),
+                pred_cam_t.detach(),
+                keypoints_3d,
+                conf_3d=confidence_input,
+            )
+            
+            smpl_poses = new_opt_pose.cpu().numpy()
+            smpl_trans = gen_joints[i][:, 0].copy()
+            
+            if smpl_poses.shape != (num_frames, 72):
+                if len(smpl_poses.shape) == 2 and smpl_poses.shape[1] == 72:
+                    smpl_poses = smpl_poses
+                else:
+                    log.error(f"Unexpected pose shape: {smpl_poses.shape}, expected ({num_frames}, 72)")
+                    continue
+            
+            output_dict = {
+                'smpl_poses': smpl_poses,
+                'smpl_trans': smpl_trans
+            }
+            
+            with open(pkl_path, 'wb') as f:
+                pickle.dump(output_dict, f)
+            
+            log.info(f"Saved SMPL pkl: {pkl_path}")
+            
+            log.info(f"Converting SMPL pkl to FBX for sample {i}...")
+            success_fbx = smpl_pkl_to_fbx(
+                pkl_path=pkl_path,
+                output_path=output_fbx_path,
+                base_fbx_path=input_fbx,
+                fps=cfg.get("fps", 20.0)
+            )
+            
+            if success_fbx:
+                log.info(f"Exported FBX: {output_fbx_path}")
+            else:
+                log.warning(f"Failed to export FBX: {output_fbx_path}")    
 
 
 

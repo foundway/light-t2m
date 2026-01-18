@@ -30,9 +30,17 @@ sample_name: "gen_motion"
 
 length: 100
 
-repeats: 3
+repeats: 1
 
 device: "0"
 
+# Optional FBX file support
+# If input_fbx is provided, it will be used as a base to extract SMPL parameters (betas, initial pose)
+# If output_fbx is provided, the generated motion will be exported to FBX files
+input_fbx: null  # Path to input FBX file (e.g., "./smpl/SMPL_sample_animations/model.fbx")
+output_fbx: null  # If not null, export motion to FBX (e.g., true or path pattern)
+
+# FPS for FBX animation export
+fps: 20.0
 
 
