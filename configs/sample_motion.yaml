@@ -30,9 +30,11 @@ sample_name: "gen_motion"
 
 length: 100
 
-repeats: 3
+repeats: 1
 
 device: "0"
 
+# FPS for FBX animation export
+fps: 20.0
 
 

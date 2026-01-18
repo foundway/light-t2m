@@ -1,21 +1,15 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 import hydra
 import rootutils
 import numpy as np
 import torch
 import lightning.pytorch as L
-from lightning.pytorch import LightningDataModule, LightningModule, Trainer
-from lightning.pytorch.loggers import Logger
+from lightning.pytorch import LightningModule
 from omegaconf import DictConfig
 
-import json
 import os
-
-import os.path as osp
 from os.path import join as pjoin
-
-import codecs as cs
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # ------------------------------------------------------------------------------------ #
@@ -45,14 +39,15 @@ from src.utils import (
 
 log = RankedLogger(__name__, rank_zero_only=True)
 
-from tqdm import tqdm
 from src.data.humanml.scripts.motion_process import recover_from_ric
+from src.data.humanml.common.quaternion import cont6d_to_matrix_np
+from src.utils.fbx_utils import export_humanml3d_to_fbx
 
 
 @torch.no_grad()
 def generation(model, cfg):
-    mean = np.load(osp.join(cfg.data_dir, "Mean.npy"))
-    std = np.load(osp.join(cfg.data_dir, "Std.npy"))
+    mean = np.load(pjoin(cfg.data_dir, "Mean.npy"))
+    std = np.load(pjoin(cfg.data_dir, "Std.npy"))
     
     if not os.path.exists(cfg.save_path):
         os.mkdir(cfg.save_path)
@@ -71,17 +66,49 @@ def generation(model, cfg):
     log.info(f"Texts list: {texts[:2]}... (total: {len(texts)} repeats)")
     motion_length = cfg.length
     
-    motion = torch.zeros([1, motion_length, 263], device=model.device)
-    motion = motion.repeat([len(texts), 1, 1]).to(model.device)
-    lens = torch.tensor(motion.shape[1], dtype=torch.long, device=model.device).repeat([len(texts)])
-    # print(lens.shape, motion.shape)
+    motion = torch.zeros([1, motion_length, 263], device=model.device).repeat([len(texts), 1, 1])
+    lens = torch.tensor(motion_length, dtype=torch.long, device=model.device).repeat(len(texts))
     gen_motions = model.sample_motion(motion, lens, texts)
     gen_motions = gen_motions * std + mean
     gen_joints = recover_from_ric(gen_motions, 22).cpu().numpy()
     
+    log.info("Extracting rotations from model output")
+    from src.data.humanml.scripts.motion_process import recover_root_rot_pos
+    from src.data.humanml.common.quaternion import quaternion_to_cont6d
+    
+    r_rot_quat, _ = recover_root_rot_pos(gen_motions)
+    r_rot_cont6d = quaternion_to_cont6d(r_rot_quat)
+    
+    start_indx = 1 + 2 + 1 + 21 * 3
+    cont6d_params = torch.cat([r_rot_cont6d, gen_motions[..., start_indx:start_indx + 21 * 6]], dim=-1)
+    cont6d_params = cont6d_params.view(-1, 22, 6)
+    
+    rot_matrices = cont6d_to_matrix_np(cont6d_params.cpu().numpy())
+    num_samples, num_frames = len(texts), gen_joints[0].shape[0]
+    gen_rotations = rot_matrices.reshape(num_samples, num_frames, 22, 3, 3)
+    
     name = cfg.sample_name
     for i in range(len(texts)):
         np.save(pjoin(save_path, name + f"_{i}.npy"), gen_joints[i])    
+
+    fbx_save_path = pjoin(cfg.save_path, "gen_fbx")
+    os.makedirs(fbx_save_path, exist_ok=True)
+    
+    for i in range(len(texts)):
+        output_fbx_path = pjoin(fbx_save_path, name + f"_{i}.fbx")
+        
+        log.info(f"Exporting HumanML3D motion to FBX for sample {i}...")
+        success_fbx = export_humanml3d_to_fbx(
+            joints=gen_joints[i],
+            rotations=gen_rotations[i],
+            output_path=output_fbx_path,
+            fps=cfg.get("fps", 20.0)
+        )
+        
+        if success_fbx:
+            log.info(f"Exported FBX: {output_fbx_path}")
+        else:
+            log.warning(f"Failed to export FBX: {output_fbx_path}")
 
 
 
@@ -108,20 +135,14 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
 
     if cfg.ckpt_path is None or cfg.ckpt_path == "none":
-        print("No ckpt!")
-        exit()
-    else:
-        # print("loading ckpt from ", cfg.ckpt_path)
-        state_dict = torch.load(cfg.ckpt_path, map_location="cpu", weights_only=False)["state_dict"]
-        keys_list = list(state_dict.keys())
-        # print(keys_list)
-        for key in keys_list:
-            if 'orig_mod.' in key:
-                deal_key = key.replace('_orig_mod.', '')
-                state_dict[deal_key] = state_dict[key]
-                del state_dict[key]
-        # print("cur", list(model.state_dict().keys()))
-        model.load_state_dict(state_dict, strict=False)
+        log.error("No checkpoint path provided!")
+        return {}, None
+    
+    state_dict = torch.load(cfg.ckpt_path, map_location="cpu", weights_only=False)["state_dict"]
+    for key in list(state_dict.keys()):
+        if 'orig_mod.' in key:
+            state_dict[key.replace('_orig_mod.', '')] = state_dict.pop(key)
+    model.load_state_dict(state_dict, strict=False)
 
 
     num_parameters = sum([x.numel() for x in model.denoiser.parameters() if x.requires_grad])
@@ -131,7 +152,7 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     generation(model, cfg)
 
-    log.info("Done!")
+    log.info("Generation completed!")
     return {}, None
 
 
