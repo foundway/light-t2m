@@ -152,7 +152,7 @@ def evaluate(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
 
     generation(model, cfg)
 
-    log.info("Done!")
+    log.info("Generation completed!")
     return {}, None
 
 

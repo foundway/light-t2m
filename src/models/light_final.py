@@ -223,11 +223,8 @@ class LightMotionGeneration(L.LightningModule):
     @torch.no_grad()
     def sample_motion(self, gt_motion, length, text):
         B, L, D = gt_motion.shape
-        # Log the text input for debugging
-        print(f"[DEBUG] sample_motion received text: {text[:3] if len(text) > 3 else text} (total: {len(text)} texts)")
         repeated_text = text.copy()
         repeated_text.extend([""] * B)
-        print(f"[DEBUG] After extending with empty strings: first text='{repeated_text[0]}', last text='{repeated_text[-1]}'")
         text_embed = self.text_encoder(repeated_text, self.device)
         time_steps = self.sample_scheduler.timesteps.to(self.device)
         pred_motion = torch.randn_like(gt_motion, device=self.device) * self.sample_scheduler.init_noise_sigma

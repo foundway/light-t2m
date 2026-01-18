@@ -186,7 +186,6 @@ def export_humanml3d_to_fbx(
         exporter.Destroy()
         manager.Destroy()
         
-        logger.info(f"Exported HumanML3D motion to FBX: {output_path} ({num_frames} frames)")
         return True
         
     except Exception as e:
