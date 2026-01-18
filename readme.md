@@ -2,6 +2,15 @@
 
 This is a fork of [Light-T2M](https://github.com/qinghuannn/light-t2m) with fixes for CUDA 13.1 compatibility and modern PyTorch versions. For the original README and documentation, see the [official repository](https://github.com/qinghuannn/light-t2m).
 
+## Quick Start
+
+```bash
+python src/sample_motion.py text="A person walks and turns right."
+```
+Outputs:
+- `./visual_datas/gen_joints/gen_motion_{X}.npy`
+- `./visual_datas/gen_fbx/gen_motion_{X}.fbx`
+
 ## Key Changes & Fixes
 
 ### CUDA 13.1 & PyTorch 2.9+ Compatibility
@@ -53,19 +62,9 @@ Tested with PyTorch 2.9.1+cu130 (CUDA 13.0) on CUDA 13.1:
 pip install torch==2.9.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
 ```
 
-## Quick Start
+### Configuration Changes
 
-```bash
-# Motion Generation
-python src/sample_motion.py device="0" \
-    model.guidance_scale=4 model.noise_scheduler.prediction_type=sample \
-    text="A person dancing hip-hop" length=100
-
-# Visualization (note: bpy requires Blender's Python, install other deps separately)
-CUDA_VISIBLE_DEVICES=0 python -W ignore visualize/blend_render.py \
-    --file_dir ./visual_datas/gen_joints --mode video \
-    --down_sample 1 --motion_list gen_motion_1
-```
+In [DDPM_ori.yaml](./configs/model/noise_scheduler/DDPM_ori.yaml), `prediction_type` is set to `sample` as opposed to the original `epsilon` to simplify commandline arguement override.
 
 ## Citation
 

@@ -7,4 +7,4 @@ beta_schedule: "linear"
 variance_type: "fixed_small"
 # need to conduct ablation studies
 clip_sample: false
-prediction_type: 'epsilon'
+prediction_type: 'sample' # default is epsilon
