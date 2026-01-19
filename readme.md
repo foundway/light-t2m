@@ -5,6 +5,7 @@ This is a fork of [Light-T2M](https://github.com/qinghuannn/light-t2m) with fixe
 ## Quick Start
 
 ```bash
+conda activate light-t2m
 python src/sample_motion.py text="A person walks and turns right."
 ```
 Outputs:
